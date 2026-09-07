@@ -1,4 +1,6 @@
-const STORAGE_KEY = "resumepage:v1";
+const IS_LOCAL_PERSONAL_MODE = window.RESUME_TOOL_LOCAL_MODE === true;
+const STORAGE_KEY = IS_LOCAL_PERSONAL_MODE ? "onepage-resume:local:v1" : "resumepage:v1";
+const VIEW_STORAGE_KEY = `${STORAGE_KEY}:view`;
 const MAX_UNDO_STEPS = 100;
 const EDIT_GROUP_DELAY = 800;
 const AUTO_SAVE_DELAY = 450;
@@ -30,8 +32,11 @@ const refs = {
   avatarInput: document.querySelector("#avatarInput")
 };
 
+const savedViewState = loadViewState();
 let state = loadState();
-let activeProfileId = state.profiles[0]?.id || "";
+let activeProfileId = state.profiles.some((profile) => profile.id === savedViewState.activeProfileId)
+  ? savedViewState.activeProfileId
+  : state.profiles[0]?.id || "";
 let dirty = false;
 let fitTimer = 0;
 let skipNextRender = false;
@@ -43,6 +48,7 @@ let historyState = createHistorySnapshot();
 let lastHistoryGroup = "";
 let lastHistoryTime = 0;
 let autoSaveTimer = 0;
+let viewSaveTimer = 0;
 let isRestoringHistory = false;
 
 init();
@@ -53,6 +59,9 @@ function init() {
   initTooltips();
   scheduleFit();
   setStatus("自动保存已开启");
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => window.scrollTo(0, Number(savedViewState.scrollY) || 0));
+  });
 }
 
 function bindEvents() {
@@ -89,6 +98,7 @@ function bindEvents() {
     if (!item) return;
     if (item.querySelector(".rename-input")) return;
     activeProfileId = item.dataset.profileId;
+    persistViewState();
     selectWrap.classList.remove("open");
     renderAll();
   });
@@ -180,13 +190,17 @@ function bindEvents() {
 
   window.addEventListener("beforeunload", (event) => {
     if (dirty) persistState();
+    persistViewState();
   });
   window.addEventListener("pagehide", () => {
     if (dirty) persistState();
+    persistViewState();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && dirty) persistState();
+    if (document.visibilityState === "hidden") persistViewState();
   });
+  window.addEventListener("scroll", scheduleViewSave, { passive: true });
   window.addEventListener("resize", scheduleFit);
   window.addEventListener("beforeprint", fitResume);
 }
@@ -489,7 +503,7 @@ function hideTooltip() {
 
 // ===== 状态加载与迁移 =====
 function loadState() {
-  const fallback = migrateToV2(clone(window.RESUME_TOOL_INITIAL_DATA || {}));
+  const fallback = migrateToV2(getInitialData());
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
@@ -497,6 +511,14 @@ function loadState() {
   } catch {
     return fallback;
   }
+}
+
+function getInitialData() {
+  const initial = clone(window.RESUME_TOOL_INITIAL_DATA || {});
+  if (IS_LOCAL_PERSONAL_MODE && Array.isArray(initial.profiles)) {
+    initial.profiles = initial.profiles.filter((profile) => ["产品", "产品运营", "用户运营"].includes(profile.label));
+  }
+  return initial;
 }
 
 function migrateToV2(input) {
@@ -682,9 +704,10 @@ function saveToBrowser() {
 function resetToInitial() {
   const ok = window.confirm("恢复初始数据会覆盖当前浏览器草稿。");
   if (!ok) return;
-  state = migrateToV2(clone(window.RESUME_TOOL_INITIAL_DATA || {}));
+  state = migrateToV2(getInitialData());
   activeProfileId = state.profiles[0]?.id || "";
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(VIEW_STORAGE_KEY);
   markDirty("已恢复初始");
   renderAll();
   persistState("已恢复初始");
@@ -1593,6 +1616,7 @@ function persistState(message = "") {
   try {
     state.updatedAt = new Date().toISOString();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistViewState();
     dirty = false;
     historyState = createHistorySnapshot();
     if (message) setStatus(message);
@@ -1601,6 +1625,31 @@ function persistState(message = "") {
     dirty = true;
     if (message) setStatus("自动保存失败，请点击保存重试");
     return false;
+  }
+}
+
+function loadViewState() {
+  try {
+    return JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function scheduleViewSave() {
+  window.clearTimeout(viewSaveTimer);
+  viewSaveTimer = window.setTimeout(persistViewState, 180);
+}
+
+function persistViewState() {
+  window.clearTimeout(viewSaveTimer);
+  try {
+    localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify({
+      activeProfileId,
+      scrollY: Math.max(0, Math.round(window.scrollY || 0))
+    }));
+  } catch {
+    // 浏览器禁用本地存储时，不影响编辑器继续使用。
   }
 }
 

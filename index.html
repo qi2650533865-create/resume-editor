@@ -71,6 +71,11 @@
   </div>
   <input id="avatarInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
   <script src="./data.js"></script>
+  <script>
+    if (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+      document.write('<script src="./data.local.js"><\/script>');
+    }
+  </script>
   <script src="./app.js"></script>
 </body>
 </html>
