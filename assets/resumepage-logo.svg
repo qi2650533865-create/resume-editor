@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">一页简历</title>
+  <defs>
+    <linearGradient id="bg" x1="8" y1="6" x2="55" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#277F76"/>
+      <stop offset="1" stop-color="#145B55"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <path d="M20 13h18l9 9v29H20a4 4 0 0 1-4-4V17a4 4 0 0 1 4-4Z" fill="#FFFDF8"/>
+  <path d="M38 13v9h9" fill="#D9EEE9"/>
+  <path d="M24 29h15M24 36h15M24 43h10" stroke="#277F76" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="46" cy="45" r="9" fill="#EF8354"/>
+  <path d="m42 45 2.5 2.5 5-5" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

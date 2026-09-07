@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="一页简历是一款本地优先、开箱即用的在线简历编辑器。">
+  <title>一页简历｜在线简历编辑器</title>
+  <link rel="icon" href="./assets/resumepage-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar no-print">
+      <div class="brand">
+        <img class="brand-mark" src="./assets/resumepage-logo.svg" alt="一页简历 Logo">
+        <div>
+          <h1>一页简历</h1>
+          <p><span class="brand-tagline">本地优先的简历编辑器</span><span class="brand-separator"> · </span><span id="statusText">自动保存已开启</span></p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="select-wrap" data-tooltip="点击切换版本，拖拽调整顺序">
+          <span>版本</span>
+          <div class="custom-select" id="profileSelectWrap">
+            <button type="button" class="custom-select-trigger" id="profileSelectTrigger">
+              <span id="profileSelectLabel">加载中...</span>
+              <span class="custom-select-arrow">▾</span>
+            </button>
+            <div class="custom-select-menu" id="profileSelectMenu">
+              <div class="custom-select-hint">拖拽排序 · 悬停可重命名或删除</div>
+              <div id="profileSelectList"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新建：空白新建 / 复制当前 -->
+        <div class="dropdown">
+          <button id="newBtn" type="button" data-tooltip="新建空白简历，或复制当前版本改新岗位">新建 ▾</button>
+          <div class="dropdown-menu">
+            <button type="button" data-action="new-blank" data-tooltip="创建一个空白的新简历版本">空白新建</button>
+            <button type="button" data-action="duplicate-profile" data-tooltip="复制当前简历，在此基础上改新岗位">复制当前版本</button>
+          </div>
+        </div>
+
+        <button id="saveBtn" type="button" data-tooltip="修改会自动保存；点击可立即保存">保存</button>
+        <button id="layoutBtn" type="button" data-tooltip="自动调整字体大小和间距，让内容铺满整页">排版</button>
+        <button id="pdfBtn" class="primary" type="button" data-tooltip="打开系统窗口，选择“另存为 PDF”">导出PDF</button>
+        <button id="printBtn" type="button" data-tooltip="打开系统窗口并选择打印机">打印</button>
+
+        <!-- 更多 -->
+        <div class="dropdown">
+          <button id="moreBtn" type="button" class="ghost" data-tooltip="更多操作：重命名、删除版本、恢复初始">⋯</button>
+          <div class="dropdown-menu dropdown-menu-right">
+            <button type="button" data-action="delete-profile" class="danger-text" data-tooltip="删除当前简历版本（不删除素材库）">删除版本</button>
+            <div class="dropdown-divider"></div>
+            <button type="button" data-action="reset-data" class="danger-text" data-tooltip="重置为初始数据，会覆盖当前浏览器草稿">恢复初始数据</button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <main class="workspace direct-edit">
+      <section class="preview-panel full-width" aria-label="简历编辑区">
+        <div class="preview-bar no-print">
+          <span id="fitStatus">一页模式</span>
+          <span class="edit-hint">自动保存 · Ctrl+Z 撤销 · 拖动要点排序 · Ctrl+C/V 复制 · Del 删除</span>
+          <button id="fitBtn" class="small" type="button">重新适配</button>
+        </div>
+        <article id="resumePage" class="resume-page" aria-label="A4 简历"></article>
+      </section>
+    </main>
+  </div>
+  <input id="avatarInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
+  <script src="./data.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
