@@ -1,13 +1,32 @@
 const IS_LOCAL_PERSONAL_MODE = window.RESUME_TOOL_LOCAL_MODE === true;
-const STORAGE_KEY = IS_LOCAL_PERSONAL_MODE ? "onepage-resume:local:v1" : "resumepage:v1";
+const APP_VERSION = "2026.09.10.1";
+const VERSION_CHECK_INTERVAL = 5 * 60 * 1000;
+const VERSION_DISMISSED_KEY = "onepage-resume:update-dismissed";
+const STORAGE_KEY = IS_LOCAL_PERSONAL_MODE ? "onepage-resume:local:v3" : "resumepage:v1";
 const VIEW_STORAGE_KEY = `${STORAGE_KEY}:view`;
+const LOCAL_CONTENT_REVISION = "onepage-project-copy:v1";
+const LOCAL_CONTENT_REVISION_KEY = "onepage-resume:local:content-revision";
+const LOCAL_PREVIOUS_DRAFT_BACKUP_KEY = "onepage-resume:local:backup-before-project-copy";
+const LOCAL_MINOR_CLEANUP_REVISION = "resume-copy-cleanup:v1";
+const LOCAL_MINOR_CLEANUP_REVISION_KEY = "onepage-resume:local:minor-cleanup-revision";
+const LOCAL_MINOR_CLEANUP_BACKUP_KEY = "onepage-resume:local:backup-before-minor-cleanup";
+const LOCAL_PRODUCT_OPERATIONS_REVISION = "product-operations-rewrite:v2";
+const LOCAL_PRODUCT_OPERATIONS_REVISION_KEY = "onepage-resume:local:product-operations-revision";
+const LOCAL_PRODUCT_OPERATIONS_BACKUP_KEY = "onepage-resume:local:backup-before-product-operations-rewrite-v2";
+const LOCAL_PROBABILITY_PLAY_REVISION = "probability-play-wording:v1";
+const LOCAL_PROBABILITY_PLAY_REVISION_KEY = "onepage-resume:local:probability-play-wording-revision";
+const LOCAL_PROBABILITY_PLAY_BACKUP_KEY = "onepage-resume:local:backup-before-probability-play-wording";
 const MAX_UNDO_STEPS = 100;
 const EDIT_GROUP_DELAY = 800;
 const AUTO_SAVE_DELAY = 450;
+const BULLET_DRAG_HOLD_DELAY = 360;
+const BULLET_DRAG_MOVE_TOLERANCE = 8;
 const AVATAR_WIDTH = 380;
 const AVATAR_HEIGHT = 476;
 const MAX_AVATAR_FILE_SIZE = 10 * 1024 * 1024;
-const DENSITY_LEVELS = ["normal", "compact", "tight", "ultra"];
+const AUTO_FIT_MIN_SCALE = 0.72;
+const AUTO_FIT_MAX_SCALE = 1;
+const AUTO_FIT_TOLERANCE = 0;
 const SECTION_TITLES = ["工作经历", "项目经历", "校园经历", "奖项经历", "其他经历"];
 const TYPE_LABELS = {
   work: "工作",
@@ -43,13 +62,16 @@ let skipNextRender = false;
 let selectedBullet = null;
 let copiedBullet = null;
 let bulletPointerDrag = null;
+let bulletDragHoldTimer = 0;
 let undoStack = [];
+let redoStack = [];
 let historyState = createHistorySnapshot();
 let lastHistoryGroup = "";
 let lastHistoryTime = 0;
 let autoSaveTimer = 0;
 let viewSaveTimer = 0;
 let isRestoringHistory = false;
+let availableAppVersion = "";
 
 init();
 
@@ -59,12 +81,21 @@ function init() {
   initTooltips();
   scheduleFit();
   setStatus("自动保存已开启");
+  window.setTimeout(checkForAppUpdate, 900);
+  window.setInterval(checkForAppUpdate, VERSION_CHECK_INTERVAL);
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => window.scrollTo(0, Number(savedViewState.scrollY) || 0));
   });
 }
 
 function bindEvents() {
+  const updateDialog = ensureUpdateDialog();
+  updateDialog.querySelector("[data-update-now]").addEventListener("click", installAvailableUpdate);
+  updateDialog.querySelector("[data-update-later]").addEventListener("click", () => {
+    rememberDismissedUpdate(availableAppVersion);
+    updateDialog.close();
+  });
+
   // 自定义版本下拉：点击切换
   const selectTrigger = document.querySelector("#profileSelectTrigger");
   const selectWrap = document.querySelector("#profileSelectWrap");
@@ -103,11 +134,22 @@ function bindEvents() {
     renderAll();
   });
   document.querySelector("#saveBtn").addEventListener("click", saveToBrowser);
+  document.querySelector("#updateBtn").addEventListener("click", () => reloadLatestVersion());
   document.querySelector("#pdfBtn").addEventListener("click", exportPdf);
   document.querySelector("#printBtn").addEventListener("click", printResume);
   document.querySelector("#fitBtn").addEventListener("click", fitResume);
   document.querySelector("#layoutBtn").addEventListener("click", autoLayout);
   refs.avatarInput.addEventListener("change", handleAvatarUpload);
+  const shortcutDialog = document.querySelector("#shortcutDialog");
+  document.querySelector("#shortcutHelpBtn").addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeAllDropdowns();
+    shortcutDialog.showModal();
+  });
+  document.querySelector("#shortcutDialogClose").addEventListener("click", () => shortcutDialog.close());
+  shortcutDialog.addEventListener("click", (event) => {
+    if (event.target === shortcutDialog) shortcutDialog.close();
+  });
 
   // 下拉菜单：点击按钮切换
   document.querySelectorAll(".dropdown > button").forEach((btn) => {
@@ -130,16 +172,31 @@ function bindEvents() {
     handleDirectEdit(target);
   });
 
-  // 要点：点击选中、直接拖拽排序
+  // 要点：单击选中、长按拖动、双击进入文字编辑
   document.addEventListener("click", (event) => {
     const bullet = event.target.closest(".resume-bullet");
     if (!bullet) return;
     selectBullet(bullet);
-    if (event.target === bullet) bullet.focus();
+    const activeEditor = event.target.closest("[data-bullet-editor][contenteditable='true']");
+    if (!activeEditor) {
+      document.querySelectorAll(".resume-bullet [data-bullet-editor][contenteditable='true']")
+        .forEach(exitBulletEdit);
+      bullet.focus();
+    }
+  });
+  document.addEventListener("dblclick", (event) => {
+    const editor = event.target.closest(".resume-bullet [data-bullet-editor]");
+    if (!editor) return;
+    event.preventDefault();
+    enterBulletEdit(editor.closest(".resume-bullet"), editor, event);
   });
   document.addEventListener("focusin", (event) => {
     const bullet = event.target.closest(".resume-bullet");
     if (bullet) selectBullet(bullet);
+  });
+  document.addEventListener("focusout", (event) => {
+    const editor = event.target.closest(".resume-bullet [data-bullet-editor][contenteditable='true']");
+    if (editor) exitBulletEdit(editor);
   });
   document.addEventListener("pointerdown", handleBulletPointerDown);
   document.addEventListener("pointermove", handleBulletPointerMove);
@@ -163,9 +220,31 @@ function bindEvents() {
     }
     const target = event.target.closest("[data-path][contenteditable='true']");
     const bullet = event.target.closest(".resume-bullet");
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+    const modifier = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    if (modifier && key === "s") {
+      event.preventDefault();
+      saveToBrowser();
+      return;
+    }
+    if (modifier && key === "p") {
+      event.preventDefault();
+      printResume();
+      return;
+    }
+    if (modifier && (key === "y" || (key === "z" && event.shiftKey))) {
+      event.preventDefault();
+      redoLastChange();
+      return;
+    }
+    if (modifier && key === "z" && !event.shiftKey) {
       event.preventDefault();
       undoLastChange();
+      return;
+    }
+    if (modifier && target && bullet && ["b", "i", "u"].includes(key)) {
+      event.preventDefault();
+      applyInlineTextFormat(target, key);
       return;
     }
     if (target && event.key === "Enter" && target.dataset.single === "true") {
@@ -182,7 +261,8 @@ function bindEvents() {
     }
     if (!target && bullet && event.key === "Enter") {
       event.preventDefault();
-      bullet.querySelector("[contenteditable='true']")?.focus();
+      const editor = bullet.querySelector("[data-bullet-editor]");
+      if (editor) enterBulletEdit(bullet, editor);
       return;
     }
     handleBulletShortcut(event, target);
@@ -199,10 +279,76 @@ function bindEvents() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && dirty) persistState();
     if (document.visibilityState === "hidden") persistViewState();
+    if (document.visibilityState === "visible") checkForAppUpdate();
   });
   window.addEventListener("scroll", scheduleViewSave, { passive: true });
   window.addEventListener("resize", scheduleFit);
   window.addEventListener("beforeprint", fitResume);
+}
+
+function ensureUpdateDialog() {
+  let dialog = document.querySelector("#appUpdateDialog");
+  if (dialog) return dialog;
+
+  dialog = document.createElement("dialog");
+  dialog.id = "appUpdateDialog";
+  dialog.className = "update-dialog no-print";
+  dialog.setAttribute("aria-labelledby", "appUpdateTitle");
+  dialog.innerHTML = `
+    <div class="update-dialog-card">
+      <span class="update-dialog-badge">版本更新</span>
+      <h2 id="appUpdateTitle">发现“一页简历”新版本</h2>
+      <p>当前修改会先自动保存在这台设备上，更新不会清空你的简历内容。</p>
+      <p class="update-dialog-version" data-update-version></p>
+      <div class="update-dialog-actions">
+        <button type="button" data-update-later>稍后再说</button>
+        <button type="button" class="primary" data-update-now>保存并更新</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  return dialog;
+}
+
+async function checkForAppUpdate() {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return;
+
+  try {
+    const response = await fetch(`./version.json?check=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const manifest = await response.json();
+    const remoteVersion = String(manifest.version || "").trim();
+    if (!remoteVersion || remoteVersion === APP_VERSION) return;
+    if (readDismissedUpdate() === remoteVersion) return;
+
+    availableAppVersion = remoteVersion;
+    const dialog = ensureUpdateDialog();
+    dialog.querySelector("[data-update-version]").textContent = `当前版本 ${APP_VERSION} · 最新版本 ${remoteVersion}`;
+    if (!dialog.open) dialog.showModal();
+  } catch {
+    // 离线或网络波动时保持正常编辑，下次回到页面后再次检查。
+  }
+}
+
+function readDismissedUpdate() {
+  try {
+    return sessionStorage.getItem(VERSION_DISMISSED_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberDismissedUpdate(version) {
+  if (!version) return;
+  try {
+    sessionStorage.setItem(VERSION_DISMISSED_KEY, version);
+  } catch {
+    // 禁用会话存储时仍允许关闭提示，本次打开页面后可能再次提示。
+  }
+}
+
+function installAvailableUpdate() {
+  reloadLatestVersion(availableAppVersion || Date.now().toString());
 }
 
 function closeAllDropdowns() {
@@ -246,6 +392,43 @@ function focusSelectedBullet() {
   });
 }
 
+function enterBulletEdit(bullet, editor, pointerEvent = null) {
+  cancelBulletPointerDrag();
+  document.querySelectorAll(".resume-bullet [data-bullet-editor][contenteditable='true']")
+    .forEach((item) => {
+      if (item !== editor) exitBulletEdit(item);
+    });
+  selectBullet(bullet);
+  bullet.classList.add("is-editing");
+  editor.setAttribute("contenteditable", "true");
+  editor.focus();
+  if (pointerEvent) placeCaretAtPoint(editor, pointerEvent.clientX, pointerEvent.clientY);
+  setStatus("文字编辑模式，按 Esc 退出");
+}
+
+function exitBulletEdit(editor) {
+  editor.setAttribute("contenteditable", "false");
+  editor.closest(".resume-bullet")?.classList.remove("is-editing");
+}
+
+function placeCaretAtPoint(editor, x, y) {
+  let range = null;
+  if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    if (position) {
+      range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+    }
+  } else if (document.caretRangeFromPoint) {
+    range = document.caretRangeFromPoint(x, y);
+  }
+  if (!range || !editor.contains(range.startContainer)) return;
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 function handleBulletShortcut(event, editableTarget) {
   const selected = getSelectedBullet();
   if (!selected) return;
@@ -265,6 +448,17 @@ function handleBulletShortcut(event, editableTarget) {
     return;
   }
 
+  if (modifier && key === "x") {
+    if (editableTarget && hasTextSelection) {
+      copiedBullet = null;
+      return;
+    }
+    event.preventDefault();
+    copiedBullet = selected.value;
+    deleteSelectedBullet(selected, "已剪切要点，按 Ctrl+V 粘贴");
+    return;
+  }
+
   if (modifier && key === "v" && copiedBullet !== null) {
     event.preventDefault();
     ensureEntryCustomized(selected.profile, selected.entryIndex);
@@ -278,48 +472,57 @@ function handleBulletShortcut(event, editableTarget) {
 
   if (event.key === "Delete" && !(editableTarget && hasTextSelection)) {
     event.preventDefault();
-    ensureEntryCustomized(selected.profile, selected.entryIndex);
-    const bullets = selected.profile.entries[selected.entryIndex].overrides.bullets;
-    bullets.splice(selected.bulletIndex, 1);
-    if (bullets.length) {
-      selectedBullet = {
-        ...selectedBullet,
-        bulletIndex: Math.min(selected.bulletIndex, bullets.length - 1)
-      };
-    } else {
-      selectedBullet = null;
-    }
-    refreshAfterMutation("已删除要点");
-    focusSelectedBullet();
+    deleteSelectedBullet(selected, "已删除要点");
   }
+}
+
+function deleteSelectedBullet(selected, message) {
+  ensureEntryCustomized(selected.profile, selected.entryIndex);
+  const bullets = selected.profile.entries[selected.entryIndex].overrides.bullets;
+  bullets.splice(selected.bulletIndex, 1);
+  if (bullets.length) {
+    selectedBullet = {
+      ...selectedBullet,
+      bulletIndex: Math.min(selected.bulletIndex, bullets.length - 1)
+    };
+  } else {
+    selectedBullet = null;
+  }
+  refreshAfterMutation(message);
+  focusSelectedBullet();
 }
 
 function handleBulletPointerDown(event) {
   if (event.button !== 0) return;
   const bullet = event.target.closest(".resume-bullet");
   if (!bullet) return;
+  if (event.target.closest("[data-bullet-editor][contenteditable='true']")) return;
+  cancelBulletPointerDrag();
   bulletPointerDrag = {
     ...bulletMeta(bullet),
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
     active: false,
     targetIndex: Number(bullet.dataset.bullet),
     insertAfter: false
   };
-  bullet.setPointerCapture?.(event.pointerId);
+  bullet.classList.add("is-holding");
+  bulletDragHoldTimer = window.setTimeout(() => activateBulletDrag(event.pointerId), BULLET_DRAG_HOLD_DELAY);
 }
 
 function handleBulletPointerMove(event) {
   if (!bulletPointerDrag || event.pointerId !== bulletPointerDrag.pointerId) return;
+  bulletPointerDrag.lastX = event.clientX;
+  bulletPointerDrag.lastY = event.clientY;
   const distance = Math.hypot(event.clientX - bulletPointerDrag.startX, event.clientY - bulletPointerDrag.startY);
-  if (!bulletPointerDrag.active && distance < 6) return;
-  bulletPointerDrag.active = true;
+  if (!bulletPointerDrag.active) {
+    if (distance > BULLET_DRAG_MOVE_TOLERANCE) cancelBulletPointerDrag();
+    return;
+  }
   event.preventDefault();
-  window.getSelection()?.removeAllRanges();
-  document.body.classList.add("is-dragging-bullet");
-  const source = document.querySelector(`.resume-bullet[data-entry="${bulletPointerDrag.entryIndex}"][data-bullet="${bulletPointerDrag.bulletIndex}"]`);
-  source?.classList.add("is-dragging");
   clearBulletDropIndicators();
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".resume-bullet");
   if (!target || Number(target.dataset.entry) !== bulletPointerDrag.entryIndex) return;
@@ -330,12 +533,27 @@ function handleBulletPointerMove(event) {
   bulletPointerDrag.insertAfter = after;
 }
 
+function activateBulletDrag(pointerId) {
+  if (!bulletPointerDrag || bulletPointerDrag.pointerId !== pointerId) return;
+  bulletDragHoldTimer = 0;
+  bulletPointerDrag.active = true;
+  window.getSelection()?.removeAllRanges();
+  document.body.classList.add("is-dragging-bullet");
+  const source = document.querySelector(`.resume-bullet[data-entry="${bulletPointerDrag.entryIndex}"][data-bullet="${bulletPointerDrag.bulletIndex}"]`);
+  source?.classList.remove("is-holding");
+  source?.classList.add("is-dragging");
+  setStatus("拖动要点以调整顺序");
+}
+
 function handleBulletPointerUp(event) {
   if (!bulletPointerDrag || event.pointerId !== bulletPointerDrag.pointerId) return;
   const drag = bulletPointerDrag;
   bulletPointerDrag = null;
+  window.clearTimeout(bulletDragHoldTimer);
+  bulletDragHoldTimer = 0;
   document.body.classList.remove("is-dragging-bullet");
-  document.querySelectorAll(".resume-bullet.is-dragging").forEach((item) => item.classList.remove("is-dragging"));
+  document.querySelectorAll(".resume-bullet.is-dragging, .resume-bullet.is-holding")
+    .forEach((item) => item.classList.remove("is-dragging", "is-holding"));
   clearBulletDropIndicators();
   if (!drag.active) return;
   event.preventDefault();
@@ -356,9 +574,12 @@ function handleBulletPointerUp(event) {
 }
 
 function cancelBulletPointerDrag() {
+  window.clearTimeout(bulletDragHoldTimer);
+  bulletDragHoldTimer = 0;
   bulletPointerDrag = null;
   document.body.classList.remove("is-dragging-bullet");
-  document.querySelectorAll(".resume-bullet.is-dragging").forEach((item) => item.classList.remove("is-dragging"));
+  document.querySelectorAll(".resume-bullet.is-dragging, .resume-bullet.is-holding")
+    .forEach((item) => item.classList.remove("is-dragging", "is-holding"));
   clearBulletDropIndicators();
 }
 
@@ -507,10 +728,241 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
-    return migrateToV2(JSON.parse(raw));
+    const loaded = migrateToV2(JSON.parse(raw));
+    const revised = applyLocalContentRevision(loaded, fallback, raw);
+    const cleaned = applyLocalMinorCleanupRevision(revised);
+    const operationsRewritten = applyLocalProductOperationsRewrite(cleaned, fallback);
+    return applyLocalProbabilityPlayWording(operationsRewritten);
   } catch {
     return fallback;
   }
+}
+
+function applyLocalContentRevision(loaded, fallback, rawDraft) {
+  if (!IS_LOCAL_PERSONAL_MODE) return loaded;
+  if (localStorage.getItem(LOCAL_CONTENT_REVISION_KEY) === LOCAL_CONTENT_REVISION) return loaded;
+
+  try {
+    if (!localStorage.getItem(LOCAL_PREVIOUS_DRAFT_BACKUP_KEY)) {
+      localStorage.setItem(LOCAL_PREVIOUS_DRAFT_BACKUP_KEY, rawDraft);
+    }
+
+    loaded.profiles.forEach((profile) => {
+      const sourceProfile = fallback.profiles.find((item) => item.label === profile.label);
+      if (!sourceProfile) return;
+      const sourceEntry = sourceProfile.entries.find((entry) => {
+        const item = resolveEntryFromState(fallback, entry);
+        return item.title.includes("一页简历");
+      });
+      const targetEntry = profile.entries.find((entry) => {
+        const item = resolveEntryFromState(loaded, entry);
+        return item.title.includes("一页简历");
+      });
+      if (!sourceEntry || !targetEntry) return;
+
+      const sourceItem = resolveEntryFromState(fallback, sourceEntry);
+      targetEntry.customized = true;
+      targetEntry.overrides = {
+        ...(targetEntry.overrides || {}),
+        title: sourceItem.title,
+        role: sourceItem.role,
+        period: sourceItem.period,
+        tags: clone(sourceItem.tags || []),
+        bullets: clone(sourceItem.bullets || [])
+      };
+    });
+
+    loaded.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+    localStorage.setItem(LOCAL_CONTENT_REVISION_KEY, LOCAL_CONTENT_REVISION);
+  } catch {
+    // 保留已恢复的旧草稿；迁移失败也不回退到默认数据。
+  }
+  return loaded;
+}
+
+function applyLocalMinorCleanupRevision(loaded) {
+  if (!IS_LOCAL_PERSONAL_MODE) return loaded;
+  if (localStorage.getItem(LOCAL_MINOR_CLEANUP_REVISION_KEY) === LOCAL_MINOR_CLEANUP_REVISION) return loaded;
+
+  try {
+    if (!localStorage.getItem(LOCAL_MINOR_CLEANUP_BACKUP_KEY)) {
+      localStorage.setItem(LOCAL_MINOR_CLEANUP_BACKUP_KEY, JSON.stringify(loaded));
+    }
+
+    loaded.profiles.forEach((profile) => {
+      profile.entries.forEach((entry) => {
+        const item = resolveEntryFromState(loaded, entry);
+
+        if (
+          item.title === "广州趣丸有限公司" &&
+          ["产品实习生", "产品实习生（TT语音）"].includes(item.role)
+        ) {
+          entry.customized = true;
+          entry.overrides = { ...(entry.overrides || {}), role: "产品运营实习生（TT语音）" };
+        }
+
+        if (item.title === "Flat Incubator" && item.role === "海外用户运营实习生") {
+          entry.customized = true;
+          entry.overrides = { ...(entry.overrides || {}), role: "海外用户运营实习生（Achat）" };
+        }
+
+        if (item.title.includes("岭南佛韵AR导览小程序")) {
+          const bullets = clone(item.bullets || []).map((bullet) => {
+            if (bullet.endsWith("并完成全流程功能测试；用户测试人数与任务完成率待确认。")) {
+              return bullet.replace("并完成全流程功能测试；用户测试人数与任务完成率待确认。", "并完成全流程功能测试。");
+            }
+            if (bullet.endsWith("并完成全流程功能测试；")) {
+              return bullet.slice(0, -1) + "。";
+            }
+            return bullet;
+          });
+          if (JSON.stringify(bullets) !== JSON.stringify(item.bullets || [])) {
+            entry.customized = true;
+            entry.overrides = { ...(entry.overrides || {}), bullets };
+          }
+        }
+      });
+    });
+
+    const skillGroups = [loaded.shared.skills];
+    loaded.profiles.forEach((profile) => {
+      if (Array.isArray(profile.skillOverrides)) skillGroups.push(profile.skillOverrides);
+    });
+    skillGroups.forEach((skills) => {
+      skills.forEach((skill) => {
+        if (
+          skill.label === "产品能力" &&
+          skill.text === "具备需求分析、商业化玩法设计、产品规划、PRD撰写、交互设计、用户反馈闭环及跨团队推进能力。"
+        ) {
+          skill.label = "产品与设计";
+          skill.text = "需求分析、商业化玩法设计、PRD撰写、交互设计与跨团队推进；熟练使用Figma完成原型设计。";
+        }
+        if (
+          skill.label === "数据分析" &&
+          skill.text === "熟练使用Excel、MySQL、Google Sheets、Figma，可完成指标追踪、数据分析、原型设计与复盘输出。"
+        ) {
+          skill.text = "熟练使用Excel、MySQL、Google Sheets，可完成指标追踪、数据分析与复盘输出。";
+        }
+      });
+    });
+
+    loaded.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+    localStorage.setItem(LOCAL_MINOR_CLEANUP_REVISION_KEY, LOCAL_MINOR_CLEANUP_REVISION);
+  } catch {
+    // 定向修正文案失败时保留原草稿，不回退到默认数据。
+  }
+  return loaded;
+}
+
+function applyLocalProductOperationsRewrite(loaded, fallback) {
+  if (!IS_LOCAL_PERSONAL_MODE) return loaded;
+  if (localStorage.getItem(LOCAL_PRODUCT_OPERATIONS_REVISION_KEY) === LOCAL_PRODUCT_OPERATIONS_REVISION) return loaded;
+
+  try {
+    const sourceProfile = fallback.profiles.find((profile) => profile.label === "产品运营");
+    const targetProfile = loaded.profiles.find((profile) => profile.label === "产品运营");
+    if (!sourceProfile || !targetProfile) return loaded;
+
+    if (!localStorage.getItem(LOCAL_PRODUCT_OPERATIONS_BACKUP_KEY)) {
+      localStorage.setItem(LOCAL_PRODUCT_OPERATIONS_BACKUP_KEY, JSON.stringify(loaded));
+    }
+
+    targetProfile.entries = targetProfile.entries.filter((entry) => {
+      const currentItem = resolveEntryFromState(loaded, entry);
+      return currentItem.title !== "Ting's Language 教育";
+    });
+
+    sourceProfile.entries.forEach((sourceEntry, index) => {
+      const sourceItem = resolveEntryFromState(fallback, sourceEntry);
+      let targetEntry = targetProfile.entries.find((entry) => {
+        const currentItem = resolveEntryFromState(loaded, entry);
+        return currentItem.title === sourceItem.title;
+      });
+
+      if (!targetEntry) {
+        let libraryId = `product-operations-rewrite-${index + 1}`;
+        while (loaded.library.items.some((item) => item.id === libraryId)) {
+          libraryId = `${libraryId}-${Date.now()}`;
+        }
+        loaded.library.items.push({ ...clone(sourceItem), id: libraryId });
+        targetEntry = {
+          id: uid("entry"),
+          libraryId,
+          sectionTitle: sourceEntry.sectionTitle,
+          enabled: true,
+          customized: true,
+          overrides: pickItemFields(sourceItem)
+        };
+        targetProfile.entries.push(targetEntry);
+        return;
+      }
+
+      targetEntry.sectionTitle = sourceEntry.sectionTitle;
+      targetEntry.customized = true;
+      targetEntry.overrides = pickItemFields(sourceItem);
+    });
+
+    targetProfile.target = sourceProfile.target;
+    targetProfile.skillOverrides = sourceProfile.skillOverrides
+      ? clone(sourceProfile.skillOverrides)
+      : clone(fallback.shared.skills);
+    loaded.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+    localStorage.setItem(LOCAL_PRODUCT_OPERATIONS_REVISION_KEY, LOCAL_PRODUCT_OPERATIONS_REVISION);
+  } catch {
+    // 仅更新产品运营版本；失败时保留更新前草稿。
+  }
+  return loaded;
+}
+
+function applyLocalProbabilityPlayWording(loaded) {
+  if (!IS_LOCAL_PERSONAL_MODE) return loaded;
+  if (localStorage.getItem(LOCAL_PROBABILITY_PLAY_REVISION_KEY) === LOCAL_PROBABILITY_PLAY_REVISION) return loaded;
+
+  try {
+    if (!localStorage.getItem(LOCAL_PROBABILITY_PLAY_BACKUP_KEY)) {
+      localStorage.setItem(LOCAL_PROBABILITY_PLAY_BACKUP_KEY, JSON.stringify(loaded));
+    }
+
+    loaded.profiles.forEach((profile) => {
+      profile.entries.forEach((entry) => {
+        const item = resolveEntryFromState(loaded, entry);
+        const bullets = clone(item.bullets || []).map((bullet) => bullet
+          .replaceAll("概率消耗玩法", "概率玩法")
+          .replaceAll("消耗玩法", "概率玩法"));
+        if (JSON.stringify(bullets) !== JSON.stringify(item.bullets || [])) {
+          entry.customized = true;
+          entry.overrides = { ...(entry.overrides || {}), bullets };
+        }
+      });
+    });
+
+    loaded.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+    localStorage.setItem(LOCAL_PROBABILITY_PLAY_REVISION_KEY, LOCAL_PROBABILITY_PLAY_REVISION);
+  } catch {
+    // 文案迁移失败时保留原草稿，不回退到默认数据。
+  }
+  return loaded;
+}
+
+function resolveEntryFromState(snapshot, entry) {
+  const source = snapshot.library.items.find((item) => item.id === entry.libraryId) || blankLibraryItem();
+  if (entry.customized !== true) return clone(source);
+  const item = clone(source);
+  const overrides = entry.overrides || {};
+  ["title", "role", "period"].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(overrides, field)) item[field] = overrides[field] || "";
+  });
+  if (Object.prototype.hasOwnProperty.call(overrides, "tags")) {
+    item.tags = Array.isArray(overrides.tags) ? clone(overrides.tags) : parseTags(overrides.tags || "");
+  }
+  if (Object.prototype.hasOwnProperty.call(overrides, "bullets")) {
+    item.bullets = Array.isArray(overrides.bullets) ? clone(overrides.bullets) : splitLines(overrides.bullets || "");
+  }
+  return item;
 }
 
 function getInitialData() {
@@ -713,18 +1165,111 @@ function resetToInitial() {
   persistState("已恢复初始");
 }
 
-function exportPdf() {
+function reloadLatestVersion(cacheToken = Date.now().toString()) {
+  persistState("已保存，正在更新");
+  persistViewState();
+  const url = new URL(window.location.href);
+  url.searchParams.set("update", String(cacheToken));
+  window.location.replace(url.href);
+}
+
+async function exportPdf() {
   fitResume();
   persistState();
-  const previousTitle = document.title;
-  const date = new Date().toISOString().slice(0, 10);
-  document.title = safeFilePart(`${getProfile().label}-简历-${date}`);
-  setStatus("请在系统窗口选择“另存为 PDF”");
-  try {
-    window.print();
-  } finally {
-    document.title = previousTitle;
+  const profile = getProfile();
+  const fileNameParts = [state.shared.basics.name, profile.target || profile.label, state.shared.education.school]
+    .map((part) => (part || "").trim())
+    .filter(Boolean);
+  const fileName = `${safeFilePart(fileNameParts.join("-") || "一页简历")}.pdf`;
+  const button = document.querySelector("#pdfBtn");
+
+  if (typeof window.html2pdf !== "function") {
+    setStatus("PDF组件加载失败，请刷新后重试");
+    window.alert("PDF组件加载失败，请刷新页面后重试。");
+    return;
   }
+
+  const exportPage = refs.resumePage.cloneNode(true);
+  exportPage.classList.remove("overflowing");
+  exportPage.querySelectorAll(".is-selected, .is-editing, .is-dragging, .is-holding, .drop-before, .drop-after")
+    .forEach((element) => element.classList.remove("is-selected", "is-editing", "is-dragging", "is-holding", "drop-before", "drop-after"));
+  exportPage.querySelectorAll("[contenteditable]").forEach((element) => element.setAttribute("contenteditable", "false"));
+  exportPage.querySelectorAll("[tabindex]").forEach((element) => element.removeAttribute("tabindex"));
+  Object.assign(exportPage.style, {
+    width: "210mm",
+    minHeight: "296.5mm",
+    height: "296.5mm",
+    margin: "0",
+    boxShadow: "none",
+    transform: "none",
+    overflow: "hidden"
+  });
+
+  const stage = document.createElement("div");
+  Object.assign(stage.style, {
+    position: "fixed",
+    left: "-10000px",
+    top: "0",
+    width: "210mm",
+    height: "297mm",
+    background: "#ffffff",
+    zIndex: "-1"
+  });
+  stage.appendChild(exportPage);
+  document.body.appendChild(stage);
+
+  button.disabled = true;
+  const previousLabel = button.textContent;
+  button.textContent = "正在导出…";
+  setStatus("正在生成PDF，请稍候");
+  try {
+    await document.fonts?.ready;
+    await preparePdfImages(exportPage);
+    await window.html2pdf()
+      .set({
+        margin: 0,
+        filename: fileName,
+        enableLinks: true,
+        image: { type: "jpeg", quality: 0.99 },
+        html2canvas: {
+          scale: 3,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          scrollX: 0,
+          scrollY: 0
+        },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true },
+        pagebreak: { mode: ["css", "legacy"] }
+      })
+      .from(exportPage)
+      .save();
+    setStatus("PDF已下载");
+  } catch (error) {
+    console.error("PDF export failed", error);
+    setStatus("PDF导出失败，请重试");
+    window.alert("PDF导出失败，请刷新页面后重试。");
+  } finally {
+    stage.remove();
+    button.disabled = false;
+    button.textContent = previousLabel;
+  }
+}
+
+async function preparePdfImages(exportPage) {
+  const images = Array.from(exportPage.querySelectorAll("img"));
+  images.forEach((image) => {
+    if (image.src.startsWith("file:") && window.RESUME_TOOL_LOCAL_AVATAR) {
+      image.src = window.RESUME_TOOL_LOCAL_AVATAR;
+    }
+  });
+  await Promise.all(images.map((image) => {
+    if (image.complete && image.naturalWidth) return Promise.resolve();
+    return new Promise((resolve) => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", resolve, { once: true });
+    });
+  }));
 }
 
 function printResume() {
@@ -900,11 +1445,11 @@ function renderResumeSections(sections, profile) {
 function renderResumeItem(item, sectionTitle, entryIndex) {
   return `
     <article class="resume-item" data-entry-index="${entryIndex}">
+      <button type="button" class="item-delete-button" data-action="delete-item" data-entry="${entryIndex}" aria-label="删除${escapeAttr(item.title || "这段经历")}" title="删除整段经历及其中全部要点">删除整段</button>
       <div class="item-hover-bar">
         <button type="button" data-action="move-item" data-entry="${entryIndex}" data-dir="-1">上移</button>
         <button type="button" data-action="move-item" data-entry="${entryIndex}" data-dir="1">下移</button>
         <button type="button" data-action="duplicate-item" data-entry="${entryIndex}">复制</button>
-        <button type="button" class="danger" data-action="delete-item" data-entry="${entryIndex}">删除</button>
       </div>
       <div class="item-head">
         <div class="item-line">
@@ -917,8 +1462,8 @@ function renderResumeItem(item, sectionTitle, entryIndex) {
         ${(item.bullets || []).filter(Boolean).map((bullet, bulletIndex) => `
           <li class="resume-bullet ${selectedBullet?.profileId === activeProfileId && selectedBullet.entryIndex === entryIndex && selectedBullet.bulletIndex === bulletIndex ? "is-selected" : ""}"
               tabindex="0" data-entry="${entryIndex}" data-bullet="${bulletIndex}"
-              aria-label="要点 ${bulletIndex + 1}，可拖动排序" title="拖动排序；选中后 Ctrl+C/V 复制，Delete 删除">
-            <span contenteditable="true" data-path="entry.${entryIndex}.overrides.bullets.${bulletIndex}">${formatBullet(bullet)}</span>
+              aria-label="要点 ${bulletIndex + 1}，单击选中，长按拖动排序，双击编辑" title="单击选中；长按拖动排序；双击编辑；Ctrl+C/V 复制；Delete 删除">
+            <span contenteditable="false" data-bullet-editor="true" data-path="entry.${entryIndex}.overrides.bullets.${bulletIndex}">${formatBullet(bullet)}</span>
           </li>
         `).join("")}
       </ul>
@@ -961,7 +1506,8 @@ function renderSkills(skills, profile) {
 // ===== 直接编辑处理 =====
 function handleDirectEdit(target) {
   const path = target.dataset.path;
-  const value = target.innerText;
+  const isBullet = path.startsWith("entry.") && path.includes(".overrides.bullets.");
+  const value = isBullet ? serializeBulletRichText(target) : target.innerText;
   const profile = getProfile();
 
   // 解析路径并更新数据
@@ -1006,8 +1552,7 @@ function handleDirectEdit(target) {
     if (field.startsWith("overrides.bullets.")) {
       const bulletIndex = Number(field.replace("overrides.bullets.", ""));
       if (!entry.overrides.bullets) entry.overrides.bullets = [];
-      // 处理 【...】 格式
-      entry.overrides.bullets[bulletIndex] = stripBulletFormat(value);
+      entry.overrides.bullets[bulletIndex] = value;
     } else if (field.startsWith("overrides.")) {
       const overrideField = field.replace("overrides.", "");
       entry.overrides[overrideField] = value;
@@ -1032,11 +1577,34 @@ function stripContactLabel(value, field) {
   return value;
 }
 
-function stripBulletFormat(html) {
-  // 移除 contenteditable 可能产生的 HTML 标签，保留 【...】 格式
-  const tmp = document.createElement("div");
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || "";
+function serializeBulletRichText(editor) {
+  function serializeNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+    const tag = node.tagName.toLowerCase();
+    const content = Array.from(node.childNodes).map(serializeNode).join("");
+    if ((tag === "strong" || tag === "b") && content) return `**${content}**`;
+    if ((tag === "em" || tag === "i") && content) return `*${content}*`;
+    if (tag === "u" && content) return `__${content}__`;
+    if (tag === "br") return "\n";
+    if ((tag === "div" || tag === "p") && node.previousSibling) return `\n${content}`;
+    return content;
+  }
+
+  return Array.from(editor.childNodes)
+    .map(serializeNode)
+    .join("")
+    .replace(/^\*\*(【[^】]+】)\*\*/, "$1")
+    .replace(/\*\*\*\*/g, "")
+    .replace(/\n{2,}/g, "\n");
+}
+
+function applyInlineTextFormat(editor, key) {
+  const commands = { b: "bold", i: "italic", u: "underline" };
+  const labels = { b: "加粗", i: "斜体", u: "下划线" };
+  document.execCommand(commands[key], false, null);
+  setStatus(`已切换${labels[key]}`);
 }
 
 function openAvatarPicker() {
@@ -1173,7 +1741,8 @@ function handleAction(action, dataset) {
     const entryIndex = Number(dataset.entry);
     const entry = profile.entries[entryIndex];
     if (!entry) return;
-    const ok = window.confirm("删除这段经历？");
+    const item = resolveEntry(entry);
+    const ok = window.confirm(`删除“${item.title || "这段经历"}”整段经历？其中所有要点会一起删除。`);
     if (!ok) return;
     profile.entries.splice(entryIndex, 1);
     refreshAfterMutation("已删除经历");
@@ -1466,69 +2035,87 @@ function scheduleFit() {
   }, 40);
 }
 
-function fitResume() {
+function fitResume(options = {}) {
   const page = refs.resumePage;
   page.classList.remove("overflowing");
-  // 清除自定义排版样式
-  page.style.cssText = "";
-  for (const level of DENSITY_LEVELS) {
-    page.dataset.density = level;
-    if (page.scrollHeight <= page.clientHeight + 2) {
-      refs.fitStatus.textContent = level === "normal" ? "一页模式" : `一页模式 · ${densityName(level)}`;
-      return;
-    }
-  }
-  page.dataset.density = "ultra";
-  page.classList.add("overflowing");
-  refs.fitStatus.textContent = `内容超出一页，建议删减：${overflowHint()}`;
-}
-
-// ===== 自适应排版：精细调整字体大小和间距，铺满整页 =====
-function autoLayout() {
-  const page = refs.resumePage;
-  page.classList.remove("overflowing");
-  
-  // 先重置为默认密度，清除自定义样式
+  page.classList.add("is-fitting");
   page.dataset.density = "normal";
-  page.style.cssText = "";
-  
-  // 强制重排
+  clearPageScale(page);
+
+  // 先尝试标准字号；仅在内容超出 A4 时逐步缩小，避免短简历被无故放大。
+  applyScale(page, AUTO_FIT_MAX_SCALE);
   void page.offsetHeight;
-  
-  const pageHeight = page.clientHeight;
-  
-  // 辅助函数：检查当前缩放是否能放进一页
-  function fits(scale) {
-    applyScale(page, scale);
+
+  let bestScale = AUTO_FIT_MAX_SCALE;
+  let fitsOnPage = pageContentFits(page);
+
+  if (!fitsOnPage) {
+    let low = AUTO_FIT_MIN_SCALE;
+    let high = AUTO_FIT_MAX_SCALE;
+
+    // 二分查找能容纳内容的最大字号，连续缩放比固定四档更稳定。
+    applyScale(page, low);
     void page.offsetHeight;
-    return page.scrollHeight <= pageHeight;
-  }
-  
-  // 从大到小逐步尝试，找到第一个能放进一页的缩放比例
-  let bestScale = 0.5;
-  let found = false;
-  for (let scale = 1.2; scale >= 0.5; scale -= 0.01) {
-    if (fits(scale)) {
-      bestScale = scale;
-      found = true;
-      break;
+    fitsOnPage = pageContentFits(page);
+
+    if (fitsOnPage) {
+      bestScale = low;
+      for (let i = 0; i < 10; i += 1) {
+        const mid = (low + high) / 2;
+        applyScale(page, mid);
+        void page.offsetHeight;
+        if (pageContentFits(page)) {
+          bestScale = mid;
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+    } else {
+      bestScale = AUTO_FIT_MIN_SCALE;
     }
   }
-  
-  // 应用最佳缩放比例
+
   applyScale(page, bestScale);
   void page.offsetHeight;
-  
-  // 最终检查
-  if (page.scrollHeight > pageHeight + 2) {
+  fitsOnPage = pageContentFits(page);
+  page.classList.remove("is-fitting");
+
+  if (!fitsOnPage) {
     page.classList.add("overflowing");
-    refs.fitStatus.textContent = `内容超出一页，建议删减：${overflowHint()}`;
+    refs.fitStatus.textContent = `A4 一页 · 已缩至最小字号，仍建议删减：${overflowHint()}`;
+  } else if (bestScale >= 0.995) {
+    refs.fitStatus.textContent = "A4 一页 · 标准字号";
   } else {
-    const fillPercent = Math.round((page.scrollHeight / pageHeight) * 100);
-    refs.fitStatus.textContent = `已排版 · 缩放 ${(bestScale * 100).toFixed(0)}% · 铺满 ${fillPercent}%`;
+    refs.fitStatus.textContent = `A4 一页 · 自动缩放 ${Math.round(bestScale * 100)}%`;
   }
-  
-  setStatus("已自动排版");
+
+  if (options.announce) {
+    setStatus(fitsOnPage ? "已自动适配为 A4 一页" : "已缩至最小字号，建议删减内容");
+  }
+}
+
+function pageContentFits(page) {
+  const contentArea = page.querySelector(".resume-inner");
+  if (!contentArea) return true;
+  return contentArea.scrollHeight <= contentArea.clientHeight + AUTO_FIT_TOLERANCE;
+}
+
+// ===== 手动触发与自动适配使用同一套规则 =====
+function autoLayout() {
+  fitResume({ announce: true });
+}
+
+function clearPageScale(page) {
+  [
+    "--body-size",
+    "--small-size",
+    "--section-size",
+    "--name-size",
+    "--gap",
+    "--item-gap",
+    "--bullet-gap"
+  ].forEach((property) => page.style.removeProperty(property));
 }
 
 function applyScale(page, scale) {
@@ -1548,14 +2135,6 @@ function applyScale(page, scale) {
     const unit = value.replace(/[0-9.]/g, "");
     page.style.setProperty(key, (num * scale).toFixed(2) + unit);
   });
-}
-
-function densityName(level) {
-  return {
-    compact: "紧凑",
-    tight: "更紧凑",
-    ultra: "极限压缩"
-  }[level] || "标准";
 }
 
 function overflowHint() {
@@ -1588,6 +2167,7 @@ function recordHistoryStep(group = "") {
   if (isRestoringHistory) return;
   const current = createHistorySnapshot();
   if (current === historyState) return;
+  redoStack = [];
   const now = Date.now();
   const continuesGroup = Boolean(group) && group === lastHistoryGroup && now - lastHistoryTime <= EDIT_GROUP_DELAY;
   if (!continuesGroup) {
@@ -1659,7 +2239,24 @@ function undoLastChange() {
     return;
   }
   window.clearTimeout(autoSaveTimer);
-  const previous = JSON.parse(undoStack.pop());
+  redoStack.push(createHistorySnapshot());
+  if (redoStack.length > MAX_UNDO_STEPS) redoStack.shift();
+  restoreHistorySnapshot(undoStack.pop(), "已撤销上一步并自动保存");
+}
+
+function redoLastChange() {
+  if (!redoStack.length) {
+    setStatus("没有可恢复的更改");
+    return;
+  }
+  window.clearTimeout(autoSaveTimer);
+  undoStack.push(createHistorySnapshot());
+  if (undoStack.length > MAX_UNDO_STEPS) undoStack.shift();
+  restoreHistorySnapshot(redoStack.pop(), "已恢复上一步并自动保存");
+}
+
+function restoreHistorySnapshot(snapshot, message) {
+  const previous = JSON.parse(snapshot);
   isRestoringHistory = true;
   state = migrateToV2(previous.state);
   activeProfileId = state.profiles.some((profile) => profile.id === previous.activeProfileId)
@@ -1673,7 +2270,7 @@ function undoLastChange() {
   historyState = createHistorySnapshot();
   renderAll();
   dirty = true;
-  persistState("已撤销上一步并自动保存");
+  persistState(message);
 }
 
 function setStatus(text) {
@@ -1792,12 +2389,18 @@ function parseTags(value) {
 }
 
 function countChars(value) {
-  return String(value || "").replace(/\s/g, "").length;
+  return String(value || "").replace(/\*\*/g, "").replace(/\s/g, "").length;
 }
 
 function formatBullet(text) {
-  const safe = escapeHtml(text || "");
-  return safe.replace(/^【([^】]+)】/, "<strong>【$1】</strong>");
+  const source = String(text || "");
+  const withFormatting = escapeHtml(source)
+    .replace(/\*\*\*([^*\n]+)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_\n]+)__/g, "<u>$1</u>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  const withLinks = withFormatting.replace(/https:\/\/[^\s<]+/g, (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+  return withLinks.replace(/^【([^】]+)】/, "<strong>【$1】</strong>");
 }
 
 function safeFilePart(text) {

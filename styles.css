@@ -179,6 +179,154 @@ button.danger {
   background: transparent;
   font-size: 13px;
 }
+
+/* ===== 快捷键说明 ===== */
+.shortcut-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 40px));
+  padding: 0;
+  border: 1px solid #d6cec3;
+  border-radius: 14px;
+  background: #fffdf9;
+  color: var(--ink);
+  box-shadow: 0 26px 80px rgba(41, 32, 24, 0.28);
+}
+.shortcut-dialog::backdrop {
+  background: rgba(28, 25, 22, 0.38);
+  backdrop-filter: blur(3px);
+}
+
+/* ===== 在线版本更新提示 ===== */
+.update-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 26px 80px rgba(41, 32, 24, 0.28);
+}
+.update-dialog::backdrop {
+  background: rgba(28, 25, 22, 0.38);
+  backdrop-filter: blur(3px);
+}
+.update-dialog-card {
+  padding: 24px;
+}
+.update-dialog-badge {
+  display: inline-flex;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: var(--accent-2);
+  background: rgba(31, 111, 104, 0.1);
+  font-size: 11px;
+  font-weight: 700;
+}
+.update-dialog h2 {
+  margin: 12px 0 8px;
+  font-size: 20px;
+}
+.update-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.update-dialog-version {
+  margin-top: 8px !important;
+  font-size: 11px !important;
+}
+.update-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.shortcut-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid #e5ded4;
+}
+.shortcut-dialog-head h2 {
+  margin: 0;
+  font-size: 19px;
+}
+.shortcut-dialog-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.shortcut-dialog-close {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+}
+.shortcut-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 26px;
+  padding: 18px 22px 22px;
+  overflow: auto;
+}
+.shortcut-groups section:last-child {
+  grid-column: 1 / -1;
+}
+.shortcut-groups h3 {
+  margin: 0 0 9px;
+  color: var(--accent-2);
+  font-size: 13px;
+}
+.shortcut-groups dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+.shortcut-groups dl > div {
+  display: grid;
+  grid-template-columns: minmax(145px, auto) 1fr;
+  align-items: center;
+  gap: 12px;
+  min-height: 29px;
+}
+.shortcut-groups dt,
+.shortcut-groups dd {
+  margin: 0;
+  font-size: 12px;
+}
+.shortcut-groups dd {
+  color: var(--muted);
+}
+.shortcut-groups kbd {
+  display: inline-flex;
+  min-width: 24px;
+  min-height: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border: 1px solid #cbc4ba;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #fff;
+  color: #34312d;
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+@media (max-width: 680px) {
+  .shortcut-groups {
+    grid-template-columns: 1fr;
+  }
+  .shortcut-groups section:last-child {
+    grid-column: auto;
+  }
+}
 .dropdown-menu button:hover {
   background: #f0ebe3;
   transform: none;
@@ -437,6 +585,43 @@ textarea:focus {
 .resume-section {
   position: relative;
 }
+.item-delete-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translateX(100%);
+  display: none;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid rgba(176, 55, 42, 0.28);
+  border-radius: 5px;
+  background: #fff8f6;
+  color: #a53c31;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(66, 34, 28, 0.12);
+  z-index: 21;
+}
+.item-delete-button::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: -10px;
+  width: 10px;
+}
+.resume-item:hover > .item-delete-button,
+.resume-item:focus-within > .item-delete-button,
+.item-delete-button:focus-visible {
+  display: block;
+}
+.item-delete-button:hover {
+  border-color: #a53c31;
+  background: #fff0ed;
+  transform: translateX(100%);
+  box-shadow: 0 4px 12px rgba(66, 34, 28, 0.16);
+}
 .item-hover-bar {
   position: absolute;
   top: -2px;
@@ -569,13 +754,24 @@ textarea:focus {
   --item-gap: 2.6mm;
   --bullet-gap: 0.85mm;
   width: 210mm;
+  height: 297mm;
   min-height: 297mm;
-  height: auto;
-  overflow: visible;
+  max-height: 297mm;
+  flex: 0 0 auto;
+  overflow: hidden;
   padding: 8mm 10mm 8mm 10mm;
   background: var(--paper);
   color: var(--resume-ink);
   box-shadow: var(--shadow);
+}
+.resume-page.is-fitting .item-hover-bar,
+.resume-page.is-fitting .item-delete-button,
+.resume-page.is-fitting .section-hover-bar,
+.resume-page.is-fitting .bullet-hover-bar,
+.resume-page.is-fitting .add-item-btn,
+.resume-page.is-fitting .add-section-btn,
+.resume-page.is-fitting .add-bullet-inline {
+  display: none !important;
 }
 .resume-page[data-density="compact"] {
   --body-size: 8.25pt;
@@ -810,15 +1006,24 @@ textarea:focus {
 .resume-page li strong {
   font-weight: 800;
 }
+.resume-page a {
+  color: inherit;
+  text-decoration: none;
+}
 .resume-page .resume-bullet {
   border-radius: 2px;
-  cursor: grab;
+  cursor: default;
   outline: 1px solid transparent;
   outline-offset: 1px;
   transition: background 0.12s ease, outline-color 0.12s ease, opacity 0.12s ease;
 }
-.resume-page .resume-bullet > [contenteditable="true"] {
+.resume-page .resume-bullet > [data-bullet-editor] {
+  cursor: default;
+  user-select: none;
+}
+.resume-page .resume-bullet.is-editing > [data-bullet-editor][contenteditable="true"] {
   cursor: text;
+  user-select: text;
 }
 .resume-page .resume-bullet.is-selected {
   background: rgba(31, 111, 104, 0.07);
@@ -830,6 +1035,9 @@ textarea:focus {
 .resume-page .resume-bullet.is-dragging {
   cursor: grabbing;
   opacity: 0.38;
+}
+.resume-page .resume-bullet.is-holding {
+  cursor: grab;
 }
 body.is-dragging-bullet,
 body.is-dragging-bullet * {
@@ -943,6 +1151,12 @@ body.is-dragging-bullet * {
   .no-print {
     display: none !important;
   }
+  .shortcut-dialog {
+    display: none !important;
+  }
+  .update-dialog {
+    display: none !important;
+  }
   .app-shell,
   .workspace,
   .preview-panel {
@@ -955,6 +1169,7 @@ body.is-dragging-bullet * {
     width: 210mm;
     height: 297mm;
     min-height: 297mm;
+    max-height: 297mm;
     margin: 0;
     padding: 8mm 10mm 8mm 10mm;
     box-shadow: none;
@@ -975,6 +1190,7 @@ body.is-dragging-bullet * {
     display: none !important;
   }
   .item-hover-bar,
+  .item-delete-button,
   .section-hover-bar,
   .bullet-hover-bar,
   .add-item-btn,

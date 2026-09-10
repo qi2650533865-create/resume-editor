@@ -6,7 +6,14 @@
   <meta name="description" content="一页简历是一款本地优先、开箱即用的在线简历编辑器。">
   <title>一页简历｜在线简历编辑器</title>
   <link rel="icon" href="./assets/resumepage-logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css">
+  <link id="appStylesheet" rel="stylesheet" href="./styles.css">
+  <script>
+    (() => {
+      const token = new URLSearchParams(location.search).get("update");
+      window.RESUME_TOOL_CACHE_TOKEN = token || "";
+      if (token) document.querySelector("#appStylesheet").href = `./styles.css?update=${encodeURIComponent(token)}`;
+    })();
+  </script>
 </head>
 <body>
   <div class="app-shell">
@@ -44,13 +51,16 @@
 
         <button id="saveBtn" type="button" data-tooltip="修改会自动保存；点击可立即保存">保存</button>
         <button id="layoutBtn" type="button" data-tooltip="自动调整字体大小和间距，让内容铺满整页">排版</button>
-        <button id="pdfBtn" class="primary" type="button" data-tooltip="打开系统窗口，选择“另存为 PDF”">导出PDF</button>
+        <button id="pdfBtn" class="primary" type="button" data-tooltip="直接生成并下载 A4 PDF 文件">导出PDF</button>
         <button id="printBtn" type="button" data-tooltip="打开系统窗口并选择打印机">打印</button>
 
         <!-- 更多 -->
         <div class="dropdown">
-          <button id="moreBtn" type="button" class="ghost" data-tooltip="更多操作：重命名、删除版本、恢复初始">⋯</button>
+          <button id="moreBtn" type="button" class="ghost" data-tooltip="更多操作：更新、删除版本、恢复初始">⋯</button>
           <div class="dropdown-menu dropdown-menu-right">
+            <button id="shortcutHelpBtn" type="button" data-tooltip="查看编辑、选择、保存等快捷键">快捷键说明</button>
+            <button id="updateBtn" type="button" data-tooltip="保存当前修改并重新载入最新版">更新到最新版</button>
+            <div class="dropdown-divider"></div>
             <button type="button" data-action="delete-profile" class="danger-text" data-tooltip="删除当前简历版本（不删除素材库）">删除版本</button>
             <div class="dropdown-divider"></div>
             <button type="button" data-action="reset-data" class="danger-text" data-tooltip="重置为初始数据，会覆盖当前浏览器草稿">恢复初始数据</button>
@@ -62,20 +72,71 @@
       <section class="preview-panel full-width" aria-label="简历编辑区">
         <div class="preview-bar no-print">
           <span id="fitStatus">一页模式</span>
-          <span class="edit-hint">自动保存 · Ctrl+Z 撤销 · 拖动要点排序 · Ctrl+C/V 复制 · Del 删除</span>
+          <span class="edit-hint">自动保存 · 双击要点编辑 · 长按拖动排序 · Ctrl+B 加粗 · Shift+End 向右选择 · Del 删除</span>
           <button id="fitBtn" class="small" type="button">重新适配</button>
         </div>
         <article id="resumePage" class="resume-page" aria-label="A4 简历"></article>
       </section>
     </main>
   </div>
+  <dialog id="shortcutDialog" class="shortcut-dialog" aria-labelledby="shortcutDialogTitle">
+    <div class="shortcut-dialog-head">
+      <div>
+        <h2 id="shortcutDialogTitle">快捷键说明</h2>
+        <p>文字快捷键需要先双击 bullet 进入编辑。</p>
+      </div>
+      <button id="shortcutDialogClose" type="button" class="shortcut-dialog-close" aria-label="关闭快捷键说明">×</button>
+    </div>
+    <div class="shortcut-groups">
+      <section>
+        <h3>通用操作</h3>
+        <dl>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>立即保存</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>P</kbd></dt><dd>打印简历</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>撤销上一步</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>恢复上一步</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>A</kbd></dt><dd>全选当前编辑区域</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>C/X/V</kbd></dt><dd>复制、剪切、粘贴</dd></div>
+        </dl>
+      </section>
+      <section>
+        <h3>文字编辑与选择</h3>
+        <dl>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>B/I/U</kbd></dt><dd>加粗、斜体、下划线</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>End</kbd></dt><dd>从光标选到本行最右侧</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>Home</kbd></dt><dd>从光标选到本行最左侧</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>←/→</kbd></dt><dd>向左或向右按词选择</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>←/→</kbd></dt><dd>按词移动光标</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>Backspace</kbd></dt><dd>删除光标前一个词</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>在 bullet 内换行</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>退出文字编辑</dd></div>
+        </dl>
+      </section>
+      <section>
+        <h3>整条 bullet</h3>
+        <dl>
+          <div><dt><kbd>Enter</kbd></dt><dd>编辑选中的 bullet</dd></div>
+          <div><dt><kbd>Delete</kbd></dt><dd>删除选中的 bullet</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>C/X/V</kbd></dt><dd>复制、剪切、粘贴整条 bullet</dd></div>
+        </dl>
+      </section>
+    </div>
+  </dialog>
   <input id="avatarInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
-  <script src="./data.js"></script>
   <script>
-    if (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-      document.write('<script src="./data.local.js"><\/script>');
-    }
+    (() => {
+      const suffix = window.RESUME_TOOL_CACHE_TOKEN
+        ? `?update=${encodeURIComponent(window.RESUME_TOOL_CACHE_TOKEN)}`
+        : "";
+      const localMode = location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      document.write(`<script src="./data.js${suffix}"><\/script>`);
+      if (localMode) {
+        document.write(`<script src="./assets/avatar.local.data.js${suffix}"><\/script>`);
+        document.write(`<script src="./data.local.js${suffix}"><\/script>`);
+      }
+      document.write(`<script src="./assets/html2pdf.bundle.min.js${suffix}"><\/script>`);
+      document.write(`<script src="./app.js${suffix}"><\/script>`);
+    })();
   </script>
-  <script src="./app.js"></script>
 </body>
 </html>
